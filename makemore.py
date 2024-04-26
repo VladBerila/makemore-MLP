@@ -132,7 +132,7 @@ for _ in range(20):
         prob = F.softmax(logits, dim=1)
         next = torch.multinomial(prob, num_samples=1)
         context = context[1:] +[next]
-        out.append(next)
-        if next == 0:
+        out.append(next.item())
+        if next.item() == 0:
             break
     print(''.join([itos[i] for i in out]))
