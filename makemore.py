@@ -86,8 +86,8 @@ def train_set(params, numIterations, learningStep):
 
         # track status
         # lri.append(learningStepExponent[i])
-        lossi.append(loss.log10().item())
-        stepi.append(i)
+        # lossi.append(loss.log10().item())
+        # stepi.append(i)
 
     #plt.plot(stepi, lossi)
     #plt.show(block=True)
