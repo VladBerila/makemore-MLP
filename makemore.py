@@ -7,6 +7,10 @@ import random # for shuffling the data
 path = pathlib.Path().resolve() # get the path to the current directory
 
 block_size = 3 # context length: how many characters do we take to predict the next one?
+batch_size = 32 
+vocab_size = 27 # 26 letters + 1 period
+n_embed = 10 # embedding size
+n_hidden = 200 # hidden size
 
 #read in all the words
 words = open(path.joinpath('names.txt'), 'r').read().splitlines()
@@ -43,12 +47,13 @@ Xdev, Ydev = build_dataset(words[n1:n2])
 Xte, Yte = build_dataset(words[n2:])
 
 g = torch.Generator().manual_seed(2147483647) # seed the random number generator
-C = torch.randn((27,10), generator= g) # initialize the character embeddings randomly
-W1 = torch.randn((30,200), generator= g) # initialize the weights randomly
-b1 = torch.randn(200, generator= g) # initialize the bias randomly
-W2 = torch.randn((200,27), generator= g) # initialize the weights randomly
-b2 = torch.randn(27, generator= g) # initialize the bias randomly
+C = torch.randn((vocab_size,n_embed), generator= g) # initialize the character embeddings randomly
+W1 = torch.randn((n_embed * block_size,n_hidden), generator= g) # initialize the weights randomly
+b1 = torch.randn(n_hidden, generator= g) # initialize the bias randomly
+W2 = torch.randn((n_hidden,vocab_size), generator= g) * 0.01 # initialize the weights randomly
+b2 = torch.randn(vocab_size, generator= g) * 0 # initialize the bias randomly
 parameters = [C, W1, b1, W2, b2] # collect all parameters
+print(sum(p.nelement() for p in parameters)) # print the number of parameters
 
 
 def train_set(params, numIterations, learningStep):
@@ -63,15 +68,15 @@ def train_set(params, numIterations, learningStep):
 
     for i in range(numIterations): # train for numIterations iterations
         # minibatch construction
-        ix = torch.randint(0, Xtr.shape[0], (32,)) # random indices
+        ix = torch.randint(0, Xtr.shape[0], (batch_size,)) # random indices
 
         # forward pass
         emb = C[Xtr[ix]]
-        h = torch.tanh(emb.view(-1,30) @ W1 + b1) # compute hidden states
+        h = torch.tanh(emb.view(emb.shape[0],-1) @ W1 + b1) # compute hidden states
         logits = h @ W2 + b2 # compute logits
         #counts = logits.exp() # compute the softmax
         #prob = counts / counts.sum(-1, keepdims=True) # normalize to get a probability
-        #loss = -prob[torch.arange(32), Y].log().mean() # cross-entropy loss
+        #loss = -prob[torch.arange(batch_size), Y].log().mean() # cross-entropy loss
         loss = F.cross_entropy(logits, Ytr[ix])
 
         # backward pass
@@ -92,26 +97,32 @@ def train_set(params, numIterations, learningStep):
     #plt.plot(stepi, lossi)
     #plt.show(block=True)
 
-    return params, loss
+    return params
 
-parameters, loss = train_set(parameters, 100000, 0.1)
-parameters, loss = train_set(parameters, 100000, 0.01)
-#parameters, loss = train_set(parameters, 60000, 0.01)
-print(loss)
+@torch.no_grad() # this decorator tells PyTorch that we do not need gradients
+def split_loss(params, split):
+    x,y = {
+        'train': (Xtr, Ytr),
+        'dev': (Xdev, Ydev),
+        'test': (Xte, Yte)
+    }[split]
+    emb = params[0][x]
+    h = torch.tanh(emb.view(emb.shape[0],-1) @ params[1] + params[2])
+    logits = h @ params[3] + params[4]
+    loss = F.cross_entropy(logits, y)
+    print(split, loss.item())
+    return loss.item()
+
+parameters = train_set(parameters, 100000, 0.1)
+parameters = train_set(parameters, 100000, 0.01)
+
+split_loss(parameters, 'test')
 
 # check the whole training set(which was sampled)
-emb = parameters[0][Xtr]
-h = torch.tanh(emb.view(-1,30) @ parameters[1] + parameters[2])
-logits = h @ parameters[3] + parameters[4]
-loss = F.cross_entropy(logits, Ytr)
-print(loss)
+split_loss(parameters, 'train')
 
 #check the dev set
-emb = parameters[0][Xdev]
-h = torch.tanh(emb.view(-1,30) @ parameters[1] + parameters[2])
-logits = h @ parameters[3] + parameters[4]
-loss = F.cross_entropy(logits, Ydev)
-print(loss)
+split_loss(parameters, 'dev')
 
 # evaluate the model
 #plt.figure(figsize=(8, 8))
