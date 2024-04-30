@@ -48,15 +48,23 @@ Xte, Yte = build_dataset(words[n2:])
 
 g = torch.Generator().manual_seed(2147483647) # seed the random number generator
 C = torch.randn((vocab_size,n_embed), generator= g) # initialize the character embeddings randomly
-W1 = torch.randn((n_embed * block_size,n_hidden), generator= g) *0.2 # initialize the weights randomly
+W1 = torch.randn((n_embed * block_size,n_hidden), generator= g) * (5/3)/((n_embed * block_size)**0.5) # initialize the weights randomly
 b1 = torch.randn(n_hidden, generator= g) * 0.01 # initialize the bias randomly
 W2 = torch.randn((n_hidden,vocab_size), generator= g) * 0.01 # initialize the weights randomly
 b2 = torch.randn(vocab_size, generator= g) * 0 # initialize the bias randomly
-parameters = [C, W1, b1, W2, b2] # collect all parameters
+
+batchNormGains = torch.ones(1, n_hidden) # initialize the batch normalization gains 
+batchNormBias = torch.zeros(1, n_hidden) # initialize the batch normalization bias
+batchNormMean_running = torch.zeros(1, n_hidden) # initialize the running mean
+batNormStd_running = torch.ones(1, n_hidden) # initialize the running standard deviation
+
+parameters = [C, W1, b1, W2, b2, batchNormGains, batchNormBias] # collect all parameters
 print(sum(p.nelement() for p in parameters)) # print the number of parameters
 
 
 def train_set(params, numIterations, learningStep):
+    global batchNormMean_running, batNormStd_running
+
     for p in params:
         p.requires_grad = True # setting requires_grad=True
 
@@ -73,12 +81,22 @@ def train_set(params, numIterations, learningStep):
         # forward pass
         emb = params[0][Xtr[ix]]
         embcat = emb.view(emb.shape[0],-1)
-        hpreact = embcat @ params[1] + params[2] #h preactivation
+
+        # Linear layer
+        hpreact = embcat @ params[1] # + params[2] #h preactivation
+
+        # batch normalization layer
+        bnmeani = hpreact.mean(0, keepdim=True)
+        bnstdi = hpreact.std(0, keepdim=True)
+        hpreact = params[5] * (hpreact - bnmeani) / bnstdi + params[6] # batch normalization
+        
+        with torch.no_grad(): # this decorator tells PyTorch that we do not need gradients
+            batchNormMean_running = 0.999 * batchNormMean_running + 0.001 * bnmeani
+            batNormStd_running = 0.999 * batNormStd_running + 0.001 * bnstdi
+        
+        # Non-linearity
         h = torch.tanh(hpreact) # compute hidden states
         logits = h @ params[3] + params[4] # compute logits
-        #counts = logits.exp() # compute the softmax
-        #prob = counts / counts.sum(-1, keepdims=True) # normalize to get a probability
-        #loss = -prob[torch.arange(batch_size), Y].log().mean() # cross-entropy loss
         loss = F.cross_entropy(logits, Ytr[ix])
 
         # backward pass
@@ -109,7 +127,10 @@ def split_loss(params, split):
         'test': (Xte, Yte)
     }[split]
     emb = params[0][x]
-    h = torch.tanh(emb.view(emb.shape[0],-1) @ params[1] + params[2])
+    embcat = emb.view(emb.shape[0],-1)
+    hpreact = embcat @ params[1] + params[2] #h preactivation
+    hpreact = params[5] * (hpreact - batchNormMean_running) / batNormStd_running + params[6] # batch normalization
+    h = torch.tanh(hpreact)
     logits = h @ params[3] + params[4]
     loss = F.cross_entropy(logits, y)
     print(split, loss.item())
