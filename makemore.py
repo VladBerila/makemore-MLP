@@ -48,8 +48,8 @@ Xte, Yte = build_dataset(words[n2:])
 
 g = torch.Generator().manual_seed(2147483647) # seed the random number generator
 C = torch.randn((vocab_size,n_embed), generator= g) # initialize the character embeddings randomly
-W1 = torch.randn((n_embed * block_size,n_hidden), generator= g) # initialize the weights randomly
-b1 = torch.randn(n_hidden, generator= g) # initialize the bias randomly
+W1 = torch.randn((n_embed * block_size,n_hidden), generator= g) *0.2 # initialize the weights randomly
+b1 = torch.randn(n_hidden, generator= g) * 0.01 # initialize the bias randomly
 W2 = torch.randn((n_hidden,vocab_size), generator= g) * 0.01 # initialize the weights randomly
 b2 = torch.randn(vocab_size, generator= g) * 0 # initialize the bias randomly
 parameters = [C, W1, b1, W2, b2] # collect all parameters
@@ -71,9 +71,11 @@ def train_set(params, numIterations, learningStep):
         ix = torch.randint(0, Xtr.shape[0], (batch_size,)) # random indices
 
         # forward pass
-        emb = C[Xtr[ix]]
-        h = torch.tanh(emb.view(emb.shape[0],-1) @ W1 + b1) # compute hidden states
-        logits = h @ W2 + b2 # compute logits
+        emb = params[0][Xtr[ix]]
+        embcat = emb.view(emb.shape[0],-1)
+        hpreact = embcat @ params[1] + params[2] #h preactivation
+        h = torch.tanh(hpreact) # compute hidden states
+        logits = h @ params[3] + params[4] # compute logits
         #counts = logits.exp() # compute the softmax
         #prob = counts / counts.sum(-1, keepdims=True) # normalize to get a probability
         #loss = -prob[torch.arange(batch_size), Y].log().mean() # cross-entropy loss
