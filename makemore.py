@@ -148,7 +148,7 @@ class Sequential:
     # get parameters of all layers and stretch them out into one list
     return [p for layer in self.layers for p in layer.parameters()]
   
-
+# WeaveNet
 n_embd = 24 # the dimensionality of the character embedding vectors
 n_hidden = 128 # the number of neurons in the hidden layer of the MLP
 model = Sequential([
