@@ -46,127 +46,68 @@ Xtr, Ytr = build_dataset(words[:n1])
 Xdev, Ydev = build_dataset(words[n1:n2])
 Xte, Yte = build_dataset(words[n2:])
 
-g = torch.Generator().manual_seed(2147483647) # seed the random number generator
-C = torch.randn((vocab_size,n_embed), generator= g) # initialize the character embeddings randomly
-W1 = torch.randn((n_embed * block_size,n_hidden), generator= g) * (5/3)/((n_embed * block_size)**0.5) # initialize the weights randomly
-b1 = torch.randn(n_hidden, generator= g) * 0.01 # initialize the bias randomly
-W2 = torch.randn((n_hidden,vocab_size), generator= g) * 0.01 # initialize the weights randomly
-b2 = torch.randn(vocab_size, generator= g) * 0 # initialize the bias randomly
+# MLP revisited
+n_embd = 10 # the dimensionality of the character embedding vectors
+n_hidden = 200 # the number of neurons in the hidden layer of the MLP
 
-batchNormGains = torch.ones(1, n_hidden) # initialize the batch normalization gains 
-batchNormBias = torch.zeros(1, n_hidden) # initialize the batch normalization bias
-batchNormMean_running = torch.zeros(1, n_hidden) # initialize the running mean
-batNormStd_running = torch.ones(1, n_hidden) # initialize the running standard deviation
+g = torch.Generator().manual_seed(2147483647) # for reproducibility
+C  = torch.randn((vocab_size, n_embd),            generator=g)
+W1 = torch.randn((n_embd * block_size, n_hidden), generator=g) * (5/3)/((n_embd * block_size)**0.5) #* 0.2
+#b1 = torch.randn(n_hidden,                        generator=g) * 0.01
+W2 = torch.randn((n_hidden, vocab_size),          generator=g) * 0.01
+b2 = torch.randn(vocab_size,                      generator=g) * 0
 
-parameters = [C, W1, b1, W2, b2, batchNormGains, batchNormBias] # collect all parameters
-print(sum(p.nelement() for p in parameters)) # print the number of parameters
+# BatchNorm parameters
+bngain = torch.ones((1, n_hidden))
+bnbias = torch.zeros((1, n_hidden))
+bnmean_running = torch.zeros((1, n_hidden))
+bnstd_running = torch.ones((1, n_hidden))
 
+parameters = [C, W1, W2, b2, bngain, bnbias]
+print(sum(p.nelement() for p in parameters)) # number of parameters in total
+for p in parameters:
+  p.requires_grad = True
 
-def train_set(params, numIterations, learningStep):
-    global batchNormMean_running, batNormStd_running
+max_steps = 200000
+batch_size = 32
+lossi = []
 
-    for p in params:
-        p.requires_grad = True # setting requires_grad=True
+for i in range(max_steps):
+  
+  # minibatch construct
+  ix = torch.randint(0, Xtr.shape[0], (batch_size,), generator=g)
+  Xb, Yb = Xtr[ix], Ytr[ix] # batch X,Y
+  
+  # forward pass
+  emb = C[Xb] # embed the characters into vectors
+  embcat = emb.view(emb.shape[0], -1) # concatenate the vectors
+  # Linear layer
+  hpreact = embcat @ W1 #+ b1 # hidden layer pre-activation
+  # BatchNorm layer
+  # -------------------------------------------------------------
+  bnmeani = hpreact.mean(0, keepdim=True)
+  bnstdi = hpreact.std(0, keepdim=True)
+  hpreact = bngain * (hpreact - bnmeani) / bnstdi + bnbias
+  with torch.no_grad():
+    bnmean_running = 0.999 * bnmean_running + 0.001 * bnmeani
+    bnstd_running = 0.999 * bnstd_running + 0.001 * bnstdi
+  # -------------------------------------------------------------
+  # Non-linearity
+  h = torch.tanh(hpreact) # hidden layer
+  logits = h @ W2 + b2 # output layer
+  loss = F.cross_entropy(logits, Yb) # loss function
+  
+  # backward pass
+  for p in parameters:
+    p.grad = None
+  loss.backward()
+  
+  # update
+  lr = 0.1 if i < 100000 else 0.01 # step learning rate decay
+  for p in parameters:
+    p.data += -lr * p.grad
 
-    #learningStepExponent = torch.linspace(-3, 0, 1000)
-    #learningStep = 10**learningStepExponent
-    #lri = []
-    lossi = []
-    stepi = []
-
-    for i in range(numIterations): # train for numIterations iterations
-        # minibatch construction
-        ix = torch.randint(0, Xtr.shape[0], (batch_size,)) # random indices
-
-        # forward pass
-        emb = params[0][Xtr[ix]]
-        embcat = emb.view(emb.shape[0],-1)
-
-        # Linear layer
-        hpreact = embcat @ params[1] # + params[2] #h preactivation
-
-        # batch normalization layer
-        bnmeani = hpreact.mean(0, keepdim=True)
-        bnstdi = hpreact.std(0, keepdim=True)
-        hpreact = params[5] * (hpreact - bnmeani) / bnstdi + params[6] # batch normalization
-        
-        with torch.no_grad(): # this decorator tells PyTorch that we do not need gradients
-            batchNormMean_running = 0.999 * batchNormMean_running + 0.001 * bnmeani
-            batNormStd_running = 0.999 * batNormStd_running + 0.001 * bnstdi
-        
-        # Non-linearity
-        h = torch.tanh(hpreact) # compute hidden states
-        logits = h @ params[3] + params[4] # compute logits
-        loss = F.cross_entropy(logits, Ytr[ix])
-
-        # backward pass
-        for p in params:
-            p.grad = None
-        loss.backward() # autograd computes all the gradients
-
-        # update
-        lr = learningStep
-        for p in params:
-            p.data +=(-lr * p.grad) # perform a GradientDescent step
-
-        # track status
-        # lri.append(learningStepExponent[i])
-        # lossi.append(loss.log10().item())
-        # stepi.append(i)
-
-    #plt.plot(stepi, lossi)
-    #plt.show(block=True)
-
-    return params
-
-@torch.no_grad() # this decorator tells PyTorch that we do not need gradients
-def split_loss(params, split):
-    x,y = {
-        'train': (Xtr, Ytr),
-        'dev': (Xdev, Ydev),
-        'test': (Xte, Yte)
-    }[split]
-    emb = params[0][x]
-    embcat = emb.view(emb.shape[0],-1)
-    hpreact = embcat @ params[1] + params[2] #h preactivation
-    hpreact = params[5] * (hpreact - batchNormMean_running) / batNormStd_running + params[6] # batch normalization
-    h = torch.tanh(hpreact)
-    logits = h @ params[3] + params[4]
-    loss = F.cross_entropy(logits, y)
-    print(split, loss.item())
-    return loss.item()
-
-parameters = train_set(parameters, 100000, 0.1)
-parameters = train_set(parameters, 100000, 0.01)
-
-split_loss(parameters, 'test')
-
-# check the whole training set(which was sampled)
-split_loss(parameters, 'train')
-
-#check the dev set
-split_loss(parameters, 'dev')
-
-# evaluate the model
-#plt.figure(figsize=(8, 8))
-#plt.scatter(parameters[0][:,0].data, parameters[0][:,1].data, s=200)
-#for i in range(parameters[0].shape[0]):
-#    plt.text(parameters[0][i,0].item(), parameters[0][i,1].item(), itos[i], ha="center", va = "center", color='white')
-#plt.grid('minor')
-#plt.show(block=True)
-
-# sample from the model
-for _ in range(20):
-    out = []
-    context = [0] * block_size
-    while True:
-        emb = parameters[0][torch.tensor([context])]
-        h = torch.tanh(emb.view(1, -1) @ parameters[1] + parameters[2])
-        logits = h @ parameters[3] + parameters[4]
-        prob = F.softmax(logits, dim=1)
-        next = torch.multinomial(prob, num_samples=1)
-        context = context[1:] +[next]
-        out.append(next.item())
-        if next.item() == 0:
-            break
-    print(''.join([itos[i] for i in out]))
+  # track stats
+  # if i % 10000 == 0: # print every once in a while
+    # print(f'{i:7d}/{max_steps:7d}: {loss.item():.4f}')
+  lossi.append(loss.log10().item())
